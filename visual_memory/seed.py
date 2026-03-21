@@ -1,11 +1,7 @@
 """Pre-populate DuckDB memory database using the encoder and VLM."""
 import sys
 
-try:
-    from memory_db import VisualMemoryDB
-except ImportError:
-    print("memory_db.py not ready yet. Run this after Person B delivers VisualMemoryDB.")
-    sys.exit(1)
+from visual_memory.memory_db import VisualMemoryDB
 
 from visual_memory.encoder import get_encoder
 from visual_memory.vlm_adapter import get_vlm
