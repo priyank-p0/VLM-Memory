@@ -16,5 +16,5 @@ class Config:
 
 def get_config() -> Config:
     return Config(
-        gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
+        gemini_api_key=os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", ""),
     )

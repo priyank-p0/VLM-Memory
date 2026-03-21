@@ -76,4 +76,13 @@ print(f"Top Match: {results[0]['description']} (Score: {results[0]['similarity']
 
 ---
 
+---
+
+## 👥 Authors
+
+- **Ralph Andrade**: Core DuckDB Memory Engine, Table Schema, and Parquet Integration.
+- **Priyank Patel**: VLM Adapter & CLIP Encoder Logic.
+- **Younjoo Han**: FiftyOne Plugin Exploration & Deployment.
+- **Jason Nitz**: Dataset curation and Exploration.
+
 *This project was built for the VLM Memory Hackathon.*
