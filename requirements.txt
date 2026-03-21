@@ -1,0 +1,10 @@
+python-dotenv
+duckdb
+numpy
+pillow
+fiftyone
+open-clip-torch
+torch
+google-genai
+fiftyone-brain
+umap-learn
