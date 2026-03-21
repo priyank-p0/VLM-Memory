@@ -11,4 +11,3 @@ operators:
 panels:
   - MemoryBrowserPanel
 secrets:
-  - GEMINI_API_KEY

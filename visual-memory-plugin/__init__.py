@@ -278,65 +278,136 @@ class MemoryBrowserPanel(foo.Panel):
 
     def on_load(self, ctx):
         ctx.panel.state.query = ""
-        ctx.panel.state.results_md = ""
+        ctx.panel.state.results_list = []
+        ctx.panel.state.results_status = ""
         ctx.panel.state.memory_count = 0
         self._refresh_count(ctx)
 
     def render(self, ctx):
         panel = types.Object()
-        panel.md("hdr", label="# 🧠 Visual Memory Browser")
+        panel.md("hdr", label="# Visual Memory Browser")
 
         panel.str(
             "query",
             label="Search memories",
             description="Natural language query",
         )
-        panel.btn("search_btn", label="🔍 Search", on_click=self.on_search)
+        panel.btn("search_btn", label="Search", on_click=self.on_search)
 
         # FIX (Issue 4): use getattr so render() is safe even if on_load hasn't
         # run yet (can happen on panel re-mount in some FiftyOne versions).
         count = getattr(ctx.panel.state, "memory_count", 0) or 0
         panel.md("stats", label=f"**{count}** memories stored")
 
-        results_md = getattr(ctx.panel.state, "results_md", "")
-        if results_md:
-            panel.md("results", label=results_md)
+        # Render each result as its own markdown block for vertical stacking
+        results = getattr(ctx.panel.state, "results_list", None) or []
+        if results:
+            panel.md("results_hdr", label="---\n### Results")
+            for i, r in enumerate(results):
+                desc = (r.get("description") or "No description")[:200]
+                sim = r.get("similarity", 0)
+                panel.md(f"result_{i}", label=f"**{i+1}.** ({sim:.0%}) {desc}")
+        else:
+            status = getattr(ctx.panel.state, "results_status", "")
+            if status:
+                panel.md("results_status", label=status)
 
-        panel.btn("store_btn", label="📝 Memorize Selected", on_click=self.on_store)
-        panel.btn("analyze_btn", label="🧠 Analyze with Memory", on_click=self.on_analyze)
-        panel.btn("refresh_btn", label="🔄 Refresh", on_click=self.on_refresh)
+        panel.md("sep", label="---")
+        panel.btn("store_btn", label="Memorize Selected", on_click=self.on_store)
+        panel.btn("analyze_btn", label="Analyze with Memory", on_click=self.on_analyze)
+        panel.btn("refresh_btn", label="Refresh", on_click=self.on_refresh)
 
-        return types.Property(panel)
+        return types.Property(panel, view=types.VStackView())
 
     def on_search(self, ctx):
         query = getattr(ctx.panel.state, "query", "") or ""
         if not query.strip():
-            ctx.panel.state.results_md = "*Enter a query above*"
+            ctx.panel.state.results_list = []
+            ctx.panel.state.results_status = "*Enter a query above*"
             return
         try:
             text_emb = _encoder.encode_text(query)
             results = _db.search(text_emb, k=5, dataset_name=ctx.dataset.name)
             if not results:
-                ctx.panel.state.results_md = "*No memories found*"
+                ctx.panel.state.results_list = []
+                ctx.panel.state.results_status = "*No memories found*"
                 return
 
-            md = "### Results\n\n"
-            for i, r in enumerate(results):
-                desc = (r.get("description") or "")[:150]
-                sim = r.get("similarity", 0)
-                md += f"**{i+1}.** ({sim:.0%}) {desc}\n\n"
-            ctx.panel.state.results_md = md
+            ctx.panel.state.results_list = [
+                {
+                    "description": r.get("description") or "",
+                    "similarity": r.get("similarity", 0),
+                    "sample_id": r.get("sample_id", ""),
+                }
+                for r in results
+            ]
+            ctx.panel.state.results_status = ""
 
-            sample_ids = [r["sample_id"] for r in results]
-            ctx.ops.set_view(ctx.dataset.select(sample_ids))
+            # Only select samples with valid FiftyOne ObjectIds (24-char hex)
+            import re
+            valid_ids = [
+                r["sample_id"] for r in results
+                if re.fullmatch(r"[0-9a-f]{24}", r["sample_id"])
+            ]
+            if valid_ids:
+                ctx.ops.set_view(ctx.dataset.select(valid_ids))
         except Exception as e:
-            ctx.panel.state.results_md = f"*Error: {e}*"
+            ctx.panel.state.results_list = []
+            ctx.panel.state.results_status = f"*Error: {e}*"
 
     def on_store(self, ctx):
-        ctx.ops.trigger("@visual-memory-plugin/store_memory")
+        view = ctx.dataset.view()
+        stored = 0
+        failed = 0
+        for sample in view.iter_samples(progress=True):
+            embedding = _encoder.encode_image(sample.filepath)
+            if embedding is None:
+                failed += 1
+                continue
+            try:
+                result = _vlm.analyze(sample.filepath)
+                _db.write(
+                    sample_id=sample.id,
+                    filepath=sample.filepath,
+                    embedding=embedding,
+                    description=result["description"],
+                    tags=result.get("tags", []),
+                    dataset_name=ctx.dataset.name,
+                )
+                stored += 1
+            except Exception as e:
+                print(f"[store_memory] sample {sample.id} failed: {e}")
+                failed += 1
+        msg = f"Stored {stored} memories"
+        if failed:
+            msg += f" ({failed} failed)"
+        ctx.ops.notify(msg)
+        self._refresh_count(ctx)
 
     def on_analyze(self, ctx):
-        ctx.ops.trigger("@visual-memory-plugin/analyze_with_memory")
+        if not ctx.current_sample:
+            ctx.ops.notify("Open a sample in the modal first", variant="warning")
+            return
+        sample = ctx.dataset[ctx.current_sample]
+        embedding = _encoder.encode_image(sample.filepath)
+        if embedding is None:
+            ctx.ops.notify("Failed to embed image", variant="error")
+            return
+        memories = _db.search(embedding, k=5, dataset_name=ctx.dataset.name)
+        result = _vlm.analyze_with_memory(
+            sample.filepath, memories, task=None
+        )
+        try:
+            sample["memory_description"] = result["description"]
+            sample["memory_reasoning"] = result["reasoning"]
+            sample["memory_tags"] = result.get("tags", [])
+            sample["num_memories_used"] = len(memories)
+            sample.save()
+        except Exception as e:
+            ctx.ops.notify(f"Analysis done but failed to save: {e}", variant="warning")
+            return
+        ctx.ops.notify("Analysis complete — check sample fields!")
+        ctx.ops.reload_samples()
 
     def on_refresh(self, ctx):
         self._refresh_count(ctx)
