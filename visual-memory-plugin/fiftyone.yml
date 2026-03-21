@@ -1,0 +1,14 @@
+name: visual-memory-plugin
+version: 0.1.0
+author: your-team
+description: Visual memory for VLM agents via DuckDB
+fiftyone_compatibility: ">=1.0"
+operators:
+  - store_memory
+  - recall_memories
+  - analyze_with_memory
+  - clear_memories
+panels:
+  - MemoryBrowserPanel
+secrets:
+  - GEMINI_API_KEY
