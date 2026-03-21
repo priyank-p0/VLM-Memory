@@ -1,4 +1,4 @@
-from memory_db import VisualMemoryDB
+from visual_memory.memory_db import VisualMemoryDB
 import numpy as np
 import os
 
