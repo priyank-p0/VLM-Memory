@@ -13,7 +13,7 @@ def main():
     if args.seed:
         print("[bridge] Running seed.py ...")
         try:
-            from seed import seed
+            from visual_memory.seed import seed
             seed()
         except ImportError:
             print("[bridge] ERROR: seed.py not found — skipping seed step", file=sys.stderr)
@@ -41,6 +41,49 @@ def main():
             "    ln -s $(pwd)/visual-memory-plugin $PLUGINS_DIR/visual-memory-plugin",
             file=sys.stderr,
         )
+
+    # ── 3b. Diagnose backend initialization ─────────────────────────────────
+    print("[bridge] Diagnosing plugin backend ...")
+    try:
+        import importlib.util, os
+        plugin_init = os.path.join(os.path.dirname(__file__), "visual-memory-plugin", "__init__.py")
+        spec = importlib.util.spec_from_file_location("visual_memory_plugin", plugin_init)
+        plugin_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(plugin_mod)
+
+        _db = getattr(plugin_mod, "_db", None)
+        _encoder = getattr(plugin_mod, "_encoder", None)
+        _vlm = getattr(plugin_mod, "_vlm", None)
+        _DB_PATH = getattr(plugin_mod, "_DB_PATH", "unknown")
+        use_mocks = getattr(plugin_mod, "USE_MOCKS", "unknown")
+
+        print(f"[bridge]   USE_MOCKS = {use_mocks}")
+        print(f"[bridge]   DB_PATH   = {_DB_PATH}")
+        print(f"[bridge]   _db type  = {type(_db).__name__}")
+        print(f"[bridge]   _enc type = {type(_encoder).__name__}")
+        print(f"[bridge]   _vlm type = {type(_vlm).__name__}")
+
+        if os.path.exists(_DB_PATH):
+            print(f"[bridge]   DB file exists: YES ({os.path.getsize(_DB_PATH)} bytes)")
+        else:
+            print(f"[bridge]   DB file exists: NO — memories won't load!")
+
+        if _db is not None:
+            count = _db.count(dataset.name)
+            print(f"[bridge]   _db.count('{dataset.name}') = {count}")
+            if count == 0:
+                total = _db.count()
+                print(f"[bridge]   _db.count() (all datasets) = {total}")
+                if total > 0:
+                    print(f"[bridge]   WARNING: Memories exist but none match dataset_name='{dataset.name}'")
+        # Close the DB connection so FiftyOne's plugin load won't hit DuckDB lock
+        if _db is not None and hasattr(_db, "close"):
+            _db.close()
+            print("[bridge]   DB connection closed (freeing lock for FiftyOne)")
+    except Exception as e:
+        import traceback
+        print(f"[bridge]   ERROR importing plugin internals: {e}")
+        traceback.print_exc()
 
     # ── 4. Launch ─────────────────────────────────────────────────────────────
     if args.no_launch:

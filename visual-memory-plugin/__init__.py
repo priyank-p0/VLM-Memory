@@ -4,54 +4,11 @@ import fiftyone.operators as foo
 import fiftyone.operators.types as types
 
 # ── Toggle this flag at integration time ──────────────────────────────────────
-USE_MOCKS = True
+USE_MOCKS = False
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 # ── Mock backends (signatures match real API exactly) ─────────────────────────
-
-class MockMemoryDB:
-    def write(self, sample_id, filepath, embedding, description=None,
-              tags=None, session_id=None, dataset_name="default", **kw):
-        print(f"MOCK WRITE: {sample_id}")
-        return True
-
-    def search(self, embedding, k=5, dataset_name=None, **kw):
-        return [
-            {
-                "sample_id": "mock",
-                "filepath": "",
-                "description": "Mock memory",
-                "tags": ["mock"],
-                "similarity": 0.99,
-            }
-        ]
-
-    def count(self, dataset_name=None):
-        return 0
-
-    def clear(self, **kw):
-        pass
-
-
-class MockEncoder:
-    def encode_image(self, path):
-        return np.zeros(512, dtype=np.float32)
-
-    def encode_text(self, text):
-        return np.zeros(512, dtype=np.float32)
-
-
-class MockVLM:
-    def analyze_with_memory(self, path, mems, task=None):
-        return {
-            "description": "Mock analysis",
-            "tags": ["mock"],
-            "reasoning": "Mock VLM",
-        }
-
-    def analyze(self, path, task=None):
-        return self.analyze_with_memory(path, [], task)
 
 
 # ── Backend initialization ────────────────────────────────────────────────────
@@ -63,29 +20,53 @@ _PLUGIN_DIR = os.path.dirname(os.path.realpath(__file__))
 _PROJECT_ROOT = os.path.dirname(_PLUGIN_DIR)
 _DB_PATH = os.path.join(_PROJECT_ROOT, "memory.duckdb")
 
-if USE_MOCKS:
-    _db = MockMemoryDB()
-    _encoder = MockEncoder()
-    _vlm = MockVLM()
-else:
-    # FIX (Issue 3): wrap in try/except — any failure here silently removes all
-    # operators from the FiftyOne UI. Fall back to mocks so the plugin stays
-    # visible and we can see the error in the notify banner.
-    try:
-        import sys
-        sys.path.insert(0, _PROJECT_ROOT)
-        from memory_db import VisualMemoryDB
-        from encoder import get_encoder
-        from vlm_adapter import get_vlm
-        _db = VisualMemoryDB(_DB_PATH)
-        _encoder = get_encoder()
-        _vlm = get_vlm()
-        print(f"[visual-memory-plugin] Real backends loaded. DB: {_DB_PATH}")
-    except Exception as _e:
-        print(f"[visual-memory-plugin] WARNING: backend init failed ({_e}), falling back to mocks")
-        _db = MockMemoryDB()
-        _encoder = MockEncoder()
-        _vlm = MockVLM()
+# if USE_MOCKS:
+#     _db = MockMemoryDB()
+#     _encoder = MockEncoder()
+#     _vlm = MockVLM()
+#else:
+# FIX (Issue 3): wrap in try/except — any failure here silently removes all
+# operators from the FiftyOne UI. Fall back to mocks so the plugin stays
+# visible and we can see the error in the notify banner.
+try:
+    import sys, traceback
+    sys.path.insert(0, _PROJECT_ROOT)
+    print(f"[visual-memory-plugin] PROJECT_ROOT: {_PROJECT_ROOT}")
+    print(f"[visual-memory-plugin] DB_PATH: {_DB_PATH}")
+    from memory_db import VisualMemoryDB
+    print("[visual-memory-plugin] memory_db imported OK")
+    from visual_memory.encoder import get_encoder
+    print("[visual-memory-plugin] encoder imported OK")
+    from visual_memory.vlm_adapter import get_vlm
+    print("[visual-memory-plugin] vlm_adapter imported OK")
+    _db = VisualMemoryDB(_DB_PATH)
+    print(f"[visual-memory-plugin] DB connected, count={_db.count()}")
+    _encoder = get_encoder()
+    print(f"[visual-memory-plugin] encoder ready: {type(_encoder).__name__}")
+    _vlm = get_vlm()
+    print(f"[visual-memory-plugin] vlm ready: {type(_vlm).__name__}")
+    print(f"[visual-memory-plugin] Real backends loaded successfully.")
+except Exception as _e:
+    traceback.print_exc()
+    print(f"[visual-memory-plugin] WARNING: backend init failed ({_e}), using dummy backends")
+
+    class _MockDB:
+        def write(self, **kw): return True
+        def search(self, *a, **kw): return []
+        def count(self, *a, **kw): return 0
+        def clear(self, **kw): pass
+
+    class _MockEnc:
+        def encode_image(self, p): return np.zeros(512, dtype=np.float32)
+        def encode_text(self, t): return np.zeros(512, dtype=np.float32)
+
+    class _MockVLM:
+        def analyze_with_memory(self, p, m, **kw): return {"description": "mock", "tags": [], "reasoning": "mock"}
+        def analyze(self, p, **kw): return self.analyze_with_memory(p, [])
+
+    _db = _MockDB()
+    _encoder = _MockEnc()
+    _vlm = _MockVLM()
 
 
 # ── Operators ─────────────────────────────────────────────────────────────────
